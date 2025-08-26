@@ -146,6 +146,10 @@ with open("Inverted_Index/GTZAN_STFT_inverted_index_table.pkl", "rb") as f:
     ii_loaded = pickle.load(f)
 ```
 
+## Authors
+
+**Ziyue Yang**, **Yuqi Zhang**
+
 ## License
 
 MIT (update if your repository uses a different license).
