@@ -83,7 +83,7 @@ def example_save_inverted_index(inverted_index):
 
 def example_load_inverted_index():
     # Example 2: Load inverted index
-    path = "Inverted_Index/GTZAN_STFT_II_100_20_CFAR.pkl"
+    path = "Inverted_Index/GTZAN_STFT_inverted_index_table.pkl"
     confirmation = input(f"Are you sure you want to load the inverted index table from {path}? (y/n): ")
     if confirmation.lower() == "y":
         with open(path, "rb") as f:
@@ -127,16 +127,17 @@ def example_query_music(inverted_index=None):
 def example_match_folder(inverted_index=None):
     # Example 4: Match a folder of queries
     # Case 1: Build inverted index inside
-    predicted_labels, true_labels, inverted_index_built = folder_to_folder_matching(
-        folder_path="Data/GTZAN/",
-        inverted_index=None,
-        query_folder_path="Data/mir-2013-GeorgeDataset_snippet(10sec)_1062/",
-        progress_bar=True,
-        CFAR_flag=True,
-        accuracy_flag=True,
-        report_flag=False,
-        confusion_flag=True,
-    )
+    if inverted_index is None:
+        predicted_labels, true_labels, inverted_index_built = folder_to_folder_matching(
+            folder_path="Data/GTZAN/",
+            inverted_index=None,
+            query_folder_path="Data/mir-2013-GeorgeDataset_snippet(10sec)_1062/",
+            progress_bar=True,
+            CFAR_flag=True,
+            accuracy_flag=True,
+            report_flag=False,
+            confusion_flag=True,
+        )
 
     # Case 2: Use provided inverted index
     if inverted_index is not None:
