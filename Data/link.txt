@@ -1,1 +1,5 @@
-https://mypikpak.com/s/VOASBzPfJBoj84yJ_PjRNXqPo1
+We use GTZAN dataset to conduct performance analysis.
+
+GTZAN dataset can be downloaded via (labels): https://www.kaggle.com/datasets/andradaolteanu/gtzan-dataset-music-genre-classification
+
+A dataset with noisy clips of GTZAN (queries): https://drive.google.com/file/d/19Na-XfyQjYRsyHJ0H8Q7SKWDE9F9mR1O/view?usp=sharing
