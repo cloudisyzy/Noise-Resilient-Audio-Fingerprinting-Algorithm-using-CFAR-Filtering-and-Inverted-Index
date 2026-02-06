@@ -12,6 +12,33 @@ This project implements an audio fingerprinting pipeline that is robust to noise
   - **SO (Smallest Of)**: Uses min(left_window, right_window), best for dense music (avoids masking weak signals near strong beats).
   - **TM (Trimmed Mean)**: Removes top 20%/bottom 10% outliers, offering a robust middle-ground.
 - **Refactored Structure**:
+
+## Algorithm Performance Comparison
+
+Below are the experimental results comparing different CFAR algorithms across two major noise scenarios.
+
+### 1. Scenario: [NATURE] Natural Noise
+*Query: GeorgeDataset (10s snippets) | Reference: GTZAN (999 songs)*
+
+| Algorithm | Accuracy |
+| :--- | :--- |
+| **TM-CFAR** | **0.7904** |
+| SO-CFAR | 0.7620 |
+| OS-CFAR | 0.7583 |
+| CA-CFAR | 0.7205 |
+
+### 2. Scenario: [AWGN] Gaussian White Noise
+*Condition: **SNR = 0dB**, Duration = 5s (Extremely challenging)*
+
+| Algorithm | Accuracy |
+| :--- | :--- |
+| **TM-CFAR** | **0.5100** |
+| SO-CFAR | 0.4850 |
+| CA-CFAR | 0.4550 |
+| OS-CFAR | 0.4400 |
+| *OFF (No Filter)* | *0.1600* |
+
+- **Refactored Structure**:
   - `audiofp/`: Core package (fingerprint, index).
   - `main.py`: Unified entry point with easy Scenario/CFAR configuration.
 - **Multiprocessing**: Enabled by default for faster index building.
