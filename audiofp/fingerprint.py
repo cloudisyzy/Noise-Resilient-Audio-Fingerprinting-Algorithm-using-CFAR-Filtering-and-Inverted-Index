@@ -110,33 +110,141 @@ class MusicFingerprint:
         anchors: List[Tuple[int, int, float]],
         delta_T: int,
         delta_F: int,
-        CFAR_flag: bool,
+        CFAR_mode: str = "CA",
     ) -> np.ndarray:
         """
-        CFAR-based false alarm suppression over anchors, then convert to (time_s, freq_hz, peak_value).
+        CFAR-based false alarm suppression over anchors.
+        modes:
+         - 'CA': Cell Averaging (Standard, best for AWGN)
+         - 'OS': Ordered Statistic (Robust, best for impulsive noise/nature)
+         - 'SO': Smallest Of (Best for multi-target/dense music, avoids masking)
+         - 'TM': Trimmed Mean (Robust compromise, rejects outliers then averages)
+         - 'OFF': No filtering
         """
+        if CFAR_mode == "OFF":
+            # Just convert to physical units
+            for i, (t, f, peak_value) in enumerate(anchors):
+                freq_hz = f * self.sample_rate / self.n_fft
+                time_s = t * self.hop_length / self.sample_rate
+                anchors[i] = (time_s, freq_hz, float(peak_value))
+            return np.array(anchors, dtype=object)
+
         fa_list: List[int] = []
         S_threshold = np.zeros((S_power.shape[0], S_power.shape[1]))
+        P_FA = 1e-4
 
         for i, (t, f, peak_value) in enumerate(anchors):
-            if CFAR_flag:
-                t0_1 = max(int(t - delta_T * 0.3), 0)
-                t0_2 = min(int(t + delta_T * 0.3), S_power.shape[1])
-                f0_1 = max(int(f - delta_F * 0.3), 0)
-                f0_2 = min(int(f + delta_F * 0.3), S_power.shape[0])
+            # Define outer window boundaries
+            t_1 = max(int(t - delta_T), 0)
+            t_2 = min(int(t + delta_T), S_power.shape[1])
+            f_1 = max(int(f - delta_F), 0)
+            f_2 = min(int(f + delta_F), S_power.shape[0])
 
-                t_1 = max(int(t - delta_T), 0)
-                t_2 = min(int(t + delta_T), S_power.shape[1])
-                f_1 = max(int(f - delta_F), 0)
-                f_2 = min(int(f + delta_F), S_power.shape[0])
+            # Define inner (guard) window boundaries
+            t0_1 = max(int(t - delta_T * 0.3), 0)
+            t0_2 = min(int(t + delta_T * 0.3), S_power.shape[1])
+            f0_1 = max(int(f - delta_F * 0.3), 0)
+            f0_2 = min(int(f + delta_F * 0.3), S_power.shape[0])
 
-                n_train = np.size(S_power[f_1:f_2, t_1:t_2]) - np.size(S_power[f0_1:f0_2, t0_1:t0_2])
-                if n_train <= 0:
-                    continue
-                noise_level = (
-                    (np.sum(S_power[f_1:f_2, t_1:t_2]) - np.sum(S_power[f0_1:f0_2, t0_1:t0_2])) / n_train
-                )
-                P_FA = 1e-4
+            noise_level = 0.0
+            n_train = 1 # Avoid division by zero if something goes wrong
+
+            if CFAR_mode == "CA":
+                # CA-CFAR: Mean of all reference cells
+                # Sum(Outer) - Sum(Inner)
+                sum_outer = np.sum(S_power[f_1:f_2, t_1:t_2])
+                sum_inner = np.sum(S_power[f0_1:f0_2, t0_1:t0_2])
+                n_outer = (f_2 - f_1) * (t_2 - t_1)
+                n_inner = (f0_2 - f0_1) * (t0_2 - t0_1)
+                n_train = n_outer - n_inner
+                
+                if n_train > 0:
+                    noise_level = (sum_outer - sum_inner) / n_train
+            
+            elif CFAR_mode == "SO":
+                # SO-CFAR (Smallest Of): Split time window into Left and Right
+                # Left Block: [t_1, t0_1] x [f_1, f_2]
+                # Right Block: [t0_2, t_2] x [f_1, f_2]
+                # Note: This ignores the frequency-guard strip above/below the cell for simplicity,
+                # focusing on temporal masking which is dominant in audio.
+                
+                # Left
+                left_block = S_power[f_1:f_2, t_1:t0_1]
+                # Right
+                right_block = S_power[f_1:f_2, t0_2:t_2]
+                
+                mean_left = np.mean(left_block) if left_block.size > 0 else float('inf')
+                mean_right = np.mean(right_block) if right_block.size > 0 else float('inf')
+                
+                # If we are at the very start/end, one might be empty/inf. Handle gracefully.
+                if left_block.size == 0: noise_level = mean_right
+                elif right_block.size == 0: noise_level = mean_left
+                else: noise_level = min(mean_left, mean_right)
+                
+                # Estimate N for alpha calculation (approximate as half of total cells)
+                n_train = (left_block.size + right_block.size) / 2
+
+            elif CFAR_mode == "OS":
+                # OS-CFAR: Percentile based
+                # Extract full window
+                full_window = S_power[f_1:f_2, t_1:t_2]
+                # Create a mask for the guard region
+                mask = np.ones(full_window.shape, dtype=bool)
+                
+                # Relative guard indices
+                gt0_1, gt0_2 = t0_1 - t_1, t0_2 - t_1
+                gf0_1, gf0_2 = f0_1 - f_1, f0_2 - f_1
+                
+                if gt0_2 > gt0_1 and gf0_2 > gf0_1:
+                     mask[gf0_1:gf0_2, gt0_1:gt0_2] = False
+                
+                training_cells = full_window[mask]
+                n_train = training_cells.size
+                
+                if n_train > 0:
+                    # 75th percentile / 1.386 approx mean for exponential distribution
+                    robust_noise_est = np.percentile(training_cells, 75)
+                    noise_level = robust_noise_est / 1.386
+
+            elif CFAR_mode == "TM":
+                # TM-CFAR (Trimmed Mean): Sort, trim top/bottom, then average
+                full_window = S_power[f_1:f_2, t_1:t_2]
+                mask = np.ones(full_window.shape, dtype=bool)
+                gt0_1, gt0_2 = t0_1 - t_1, t0_2 - t_1
+                gf0_1, gf0_2 = f0_1 - f_1, f0_2 - f_1
+                
+                if gt0_2 > gt0_1 and gf0_2 > gf0_1:
+                     mask[gf0_1:gf0_2, gt0_1:gt0_2] = False
+                
+                training_cells = full_window[mask]
+                N = training_cells.size
+                
+                if N > 4: # Only trim if we have enough samples
+                    # Sort
+                    sorted_cells = np.sort(training_cells)
+                    # Trim Top 20%, Bottom 10%
+                    n1 = int(N * 0.2) # Top
+                    n2 = int(N * 0.1) # Bottom
+                    
+                    # Remaining slice
+                    trimmed_cells = sorted_cells[n2 : N - n1]
+                    if trimmed_cells.size > 0:
+                        noise_level = np.mean(trimmed_cells)
+                        n_train = trimmed_cells.size
+                    else:
+                        noise_level = np.mean(sorted_cells) # Fallback
+                        n_train = N
+                elif N > 0:
+                    noise_level = np.mean(training_cells)
+                    n_train = N
+                else:
+                    n_train = 0
+
+            # Calculate Threshold
+            # Note: The 'alpha' formula technically depends on the CFAR type and N.
+            # For simplicity in this demo, we reuse the CA alpha formula.
+            # In rigorous radar systems, OS and SO have different alpha lookups.
+            if n_train > 0:
                 alpha = n_train * ((1 / P_FA) ** (1 / n_train) - 1)
                 S_threshold[f, t] = alpha * noise_level
 
@@ -162,10 +270,15 @@ class MusicFingerprint:
         plot_flag: bool = False,
         plot_duration: float = 10.0,
         CFAR_flag: bool = True,
+        CFAR_mode: str = None,
     ) -> np.ndarray:
         """
         Tile time-frequency plane and pick block maxima as anchors, then filter by CFAR (optional).
         """
+        # Resolve mode: CFAR_mode takes precedence, fallback to CFAR_flag logic
+        if CFAR_mode is None:
+            CFAR_mode = "CA" if CFAR_flag else "OFF"
+
         S_dB = librosa.amplitude_to_db(np.abs(S))
         S_power = np.square(np.abs(S))
         delta_T = int((delta_T_ms / 1000) * self.sample_rate / self.hop_length)
@@ -186,7 +299,7 @@ class MusicFingerprint:
                 max_t = t + int(max_idx[1][0])
                 anchors.append((max_t, max_f, max_val))
 
-        anchors_array = self.anchors_filter(S_power, anchors, delta_T, delta_F, CFAR_flag)
+        anchors_array = self.anchors_filter(S_power, anchors, delta_T, delta_F, CFAR_mode=CFAR_mode)
 
         if plot_flag:
             plt.figure(figsize=(20, 6))
@@ -203,7 +316,7 @@ class MusicFingerprint:
             plt.ylabel("Frequency (kHz)")
             plt.yticks(np.arange(0, 5001, 1000), np.arange(0, 6, 1))
             plt.xlabel("Time (s)")
-            plt.title(f"Sonogram of {self.file_path} with Anchors")
+            plt.title(f"Sonogram of {self.file_path} with Anchors ({CFAR_mode}-CFAR)")
             anchor_times = anchors_array[:, 0].astype(float)
             anchor_freqs = anchors_array[:, 1].astype(float)
             plt.scatter(anchor_times, anchor_freqs, color="cyan", marker="x", s=50)
@@ -263,6 +376,7 @@ class MusicFingerprint:
         plot_flag: bool = False,
         plot_duration: float = 10.0,
         CFAR_flag: bool = True,
+        CFAR_mode: str = None,
     ) -> List[Tuple[float, Tuple[float, float, float]]]:
         """
         Convenience wrapper: STFT -> anchors -> hashes.
@@ -275,6 +389,7 @@ class MusicFingerprint:
             plot_flag=plot_flag,
             plot_duration=plot_duration,
             CFAR_flag=CFAR_flag,
+            CFAR_mode=CFAR_mode,
         )
         hashes = self.compute_hash(
             anchors,
@@ -288,7 +403,7 @@ class MusicFingerprint:
     def audioClip(self, start_time_sec: float, len_sec: float) -> "MusicFingerprintFromData":
         return self.audio_clip(start_time_sec, len_sec)
 
-    def getAnchor(self, S, delta_T_ms=200, n_bands=20, plot_flag=False, plot_duration=10, CFAR_flag=True):
+    def getAnchor(self, S, delta_T_ms=200, n_bands=20, plot_flag=False, plot_duration=10, CFAR_flag=True, CFAR_mode=None):
         return self.get_anchor(
             S,
             delta_T_ms=delta_T_ms,
@@ -296,6 +411,7 @@ class MusicFingerprint:
             plot_flag=plot_flag,
             plot_duration=plot_duration,
             CFAR_flag=CFAR_flag,
+            CFAR_mode=CFAR_mode,
         )
 
     def computeHash(
@@ -322,6 +438,7 @@ class MusicFingerprint:
         plot_flag=False,
         plot_duration=10,
         CFAR_flag=True,
+        CFAR_mode=None,
     ):
         return self.get_hash(
             delta_T_ms=delta_T_ms,
@@ -332,6 +449,7 @@ class MusicFingerprint:
             plot_flag=plot_flag,
             plot_duration=plot_duration,
             CFAR_flag=CFAR_flag,
+            CFAR_mode=CFAR_mode,
         )
 
 

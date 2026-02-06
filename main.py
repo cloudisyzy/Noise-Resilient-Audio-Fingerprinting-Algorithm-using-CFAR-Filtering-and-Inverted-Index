@@ -175,7 +175,74 @@ def example_timing_demo():
 
 
 if __name__ == "__main__":
-    # Run the examples selectively by uncommenting the lines below.
+    # ==========================================
+    #             EXPERIMENT CONFIG
+    # ==========================================
+    
+    # Select Scenario: "AWGN" or "NATURE"
+    #  - AWGN:   Uses GTZAN + Gaussian Noise (SNR=10dB)
+    #  - NATURE: Uses Real-world recording snippets (mir-2013)
+    SCENARIO = "NATURE" 
+
+    # Select CFAR Algorithm: "CA", "OS", "SO", "TM"
+    #  - CA: Cell Averaging (Best for AWGN)
+    #  - OS: Ordered Statistic (Best for Nature/Impulsive)
+    #  - SO: Smallest Of (Best for Dense Music/Interference)
+    #  - TM: Trimmed Mean (Robust compromise)
+    CFAR_MODE = "TM"  
+
+    # ==========================================
+    #             PATH CONFIG
+    # ==========================================
+    
+    # NOTE: The datasets below are NOT included in the git repository.
+    # You must download/generate them and place them in the 'Data/' folder.
+    REF_FOLDER = "Data/GTZAN/"  # Place your clean reference dataset here (e.g. GTZAN)
+    
+    if SCENARIO == "AWGN":
+        # Example: Using 10s clips with 10dB SNR
+        QUERY_FOLDER = "Data/GTZAN_8kHz_5s_SNR=0dB_num=200_from_30s/"  # Place your AWGN noisy dataset here
+    elif SCENARIO == "NATURE":
+        # Real world noise dataset
+        QUERY_FOLDER = "Data/mir-2013-GeorgeDataset_snippet(10sec)_1062/"  # Place your real-world noisy dataset here
+    else:
+        # Fallback or Custom
+        QUERY_FOLDER = ".../..."  # Place your custom query dataset here
+
+    print(f"\n{'='*60}")
+    print(f"Running Experiment: Scenario=[{SCENARIO}] | CFAR=[{CFAR_MODE}]")
+    print(f"Reference: {REF_FOLDER}")
+    print(f"Query:     {QUERY_FOLDER}")
+    print(f"{'='*60}\n")
+
+    # 1. Build Inverted Index (or load if you have one saved)
+    # Note: For accurate comparison, we rebuild index from clean GTZAN each time 
+    # or pass None so it builds internally.
+    
+    # 2. Run Matching
+    folder_to_folder_matching(
+        folder_path=REF_FOLDER,
+        query_folder_path=QUERY_FOLDER,
+        inverted_index=None,  # Will build new index from REF_FOLDER
+        window_length_ms=100,
+        hop_length_ms=20,
+        zero_padding=4,
+        delta_T_ms=200,
+        n_bands=20,
+        target_zone_time_s=0.5,
+        target_zone_time_offset_s=0.1,
+        target_zone_freq_factor=0.5,
+        progress_bar=True,
+        CFAR_flag=True,      # Enable CFAR
+        CFAR_mode=CFAR_MODE, # Pass selected mode
+        accuracy_flag=True,
+        report_flag=False,
+        confusion_flag=False # Set to True to show plot
+    )
+
+    # ---------------------------------------------------------
+    # Legacy Examples (Uncomment to run individually)
+    # ---------------------------------------------------------
 
     # 1) Build inverted index (multiprocess)
     # ii = example_build_inverted_index()
@@ -191,7 +258,7 @@ if __name__ == "__main__":
     # 3) Query a music
     # example_query_music(inverted_index=ii_loaded)
 
-    # 4) Match a folder
+    # 4) Match a folder (Old wrapper)
     # example_match_folder(inverted_index=ii_loaded)
 
     # 5) Timing demo

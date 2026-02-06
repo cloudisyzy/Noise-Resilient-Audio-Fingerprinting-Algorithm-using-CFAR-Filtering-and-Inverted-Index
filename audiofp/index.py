@@ -31,6 +31,7 @@ def _process_file_for_index(
     target_zone_time_offset_s: float,
     target_zone_freq_factor: float,
     CFAR_flag: bool,
+    CFAR_mode: str,
 ) -> InvertedIndex:
     """
     Helper for multiprocessing. Must be top-level for pickling.
@@ -43,6 +44,11 @@ def _process_file_for_index(
         zero_padding=zero_padding,
     )
     song_id = file_name
+    
+    # Backward compatibility
+    if CFAR_mode is None:
+        CFAR_mode = "CA" if CFAR_flag else "OFF"
+        
     hashes = music.get_hash(
         delta_T_ms=delta_T_ms,
         n_bands=n_bands,
@@ -50,7 +56,7 @@ def _process_file_for_index(
         target_zone_time_offset_s=target_zone_time_offset_s,
         target_zone_freq_factor=target_zone_freq_factor,
         plot_flag=False,
-        CFAR_flag=CFAR_flag,
+        CFAR_mode=CFAR_mode,
     )
     partial: InvertedIndex = {}
     for t_offset, h in hashes:
@@ -73,6 +79,7 @@ def inverted_index_table(
     target_zone_freq_factor: float = 0.5,
     progress_bar: bool = True,
     CFAR_flag: bool = True,
+    CFAR_mode: str = "CA",
     multiprocess: bool = True,
     num_workers: Optional[int] = None,
     # Backward-compatibility with old API:
@@ -80,10 +87,6 @@ def inverted_index_table(
 ) -> InvertedIndex:
     """
     Build inverted index for all audio files in folder_path.
-    - Replaces multithreading with multiprocessing by default.
-    - If 'multithread' is provided, it's treated as deprecated and mapped to 'multiprocess'.
-      multithread=True  -> multiprocess=True
-      multithread=False -> multiprocess=False
     """
     if multithread is not None:
         warnings.warn(
@@ -92,6 +95,10 @@ def inverted_index_table(
             stacklevel=2,
         )
         multiprocess = bool(multithread)
+    
+    # Handle CFAR mode/flag precedence
+    if not CFAR_flag:
+        CFAR_mode = "OFF"
 
     all_files: List[str] = []
     for _, _, files in os.walk(folder_path):
@@ -118,13 +125,14 @@ def inverted_index_table(
                     target_zone_time_offset_s,
                     target_zone_freq_factor,
                     CFAR_flag,
+                    CFAR_mode,
                 ): file_name
                 for file_name in all_files
             }
 
             iterator = as_completed(futures)
             if progress_bar:
-                iterator = tqdm(iterator, total=len(futures), desc="Building Inverted Index (multiprocess)")
+                iterator = tqdm(iterator, total=len(futures), desc=f"Building Inverted Index ({CFAR_mode}-CFAR)")
 
             for future in iterator:
                 partial = future.result()
@@ -135,7 +143,7 @@ def inverted_index_table(
     else:
         iterator = all_files
         if progress_bar:
-            iterator = tqdm(all_files, desc="Building Inverted Index (single process)")
+            iterator = tqdm(all_files, desc=f"Building Inverted Index ({CFAR_mode}-CFAR)")
         for file_name in iterator:
             partial = _process_file_for_index(
                 folder_path,
@@ -149,6 +157,7 @@ def inverted_index_table(
                 target_zone_time_offset_s,
                 target_zone_freq_factor,
                 CFAR_flag,
+                CFAR_mode,
             )
             for h, entries in partial.items():
                 if h not in inverted_index:
@@ -163,14 +172,15 @@ def query_from_table(
     inverted_index: InvertedIndex,
     *,
     CFAR_flag: bool = True,
+    CFAR_mode: str = "CA",
 ) -> Tuple[Dict[str, int], Dict[str, List[float]]]:
     """
     Search a query track using a pre-built inverted index.
-    Returns:
-        match_counts: song_id -> count at modal delta_t
-        time_diffs:   song_id -> list of rounded delta_t's
     """
-    query_hashes = query_music.get_hash(plot_flag=False, CFAR_flag=CFAR_flag)
+    if not CFAR_flag:
+        CFAR_mode = "OFF"
+
+    query_hashes = query_music.get_hash(plot_flag=False, CFAR_mode=CFAR_mode)
     time_diffs: Dict[str, List[float]] = {}
 
     for t_query, h in query_hashes:
@@ -204,10 +214,14 @@ def music_to_folder_matching(
     target_zone_freq_factor: float = 0.5,
     progress_bar: bool = True,
     CFAR_flag: bool = True,
+    CFAR_mode: str = "CA",
 ) -> Tuple[Optional[str], Dict[str, int], Dict[str, List[float]]]:
     """
     Match a single query file against a folder (using or building an inverted index).
     """
+    if not CFAR_flag:
+        CFAR_mode = "OFF"
+
     if inverted_index is None:
         inverted_index = inverted_index_table(
             folder_path,
@@ -220,7 +234,7 @@ def music_to_folder_matching(
             target_zone_time_offset_s=target_zone_time_offset_s,
             target_zone_freq_factor=target_zone_freq_factor,
             progress_bar=progress_bar,
-            CFAR_flag=CFAR_flag,
+            CFAR_mode=CFAR_mode,
             multiprocess=True,
         )
 
@@ -232,7 +246,7 @@ def music_to_folder_matching(
         zero_padding=zero_padding,
     )
 
-    match_counts, time_diffs = query_from_table(query_music, inverted_index, CFAR_flag=CFAR_flag)
+    match_counts, time_diffs = query_from_table(query_music, inverted_index, CFAR_mode=CFAR_mode)
 
     # aggregate before '-'
     match_counts_cleaned: Dict[str, int] = {}
@@ -265,6 +279,7 @@ def folder_to_folder_matching(
     target_zone_freq_factor: float = 0.5,
     progress_bar: bool = True,
     CFAR_flag: bool = True,
+    CFAR_mode: str = "CA",
     accuracy_flag: bool = True,
     report_flag: bool = True,
     confusion_flag: bool = True,
@@ -274,6 +289,9 @@ def folder_to_folder_matching(
     Returns:
         predicted_labels, true_labels, inverted_index
     """
+    if not CFAR_flag:
+        CFAR_mode = "OFF"
+
     if inverted_index is None:
         inverted_index = inverted_index_table(
             folder_path,
@@ -286,7 +304,7 @@ def folder_to_folder_matching(
             target_zone_time_offset_s=target_zone_time_offset_s,
             target_zone_freq_factor=target_zone_freq_factor,
             progress_bar=progress_bar,
-            CFAR_flag=CFAR_flag,
+            CFAR_mode=CFAR_mode,
             multiprocess=True,
         )
 
@@ -295,7 +313,7 @@ def folder_to_folder_matching(
 
     query_files = [f for f in os.listdir(query_folder_path) if f.lower().endswith(".wav")]
     if progress_bar:
-        query_files = list(tqdm(query_files, desc="Matching Queries"))
+        query_files = list(tqdm(query_files, desc=f"Matching Queries ({CFAR_mode}-CFAR)"))
 
     for query_file_name in query_files:
         query_music = MusicFingerprint(
@@ -306,7 +324,7 @@ def folder_to_folder_matching(
             zero_padding=zero_padding,
         )
 
-        query_hashes = query_music.get_hash(plot_flag=False, CFAR_flag=CFAR_flag)
+        query_hashes = query_music.get_hash(plot_flag=False, CFAR_mode=CFAR_mode)
         time_diffs: Dict[str, List[float]] = {}
 
         for t_query, h in query_hashes:

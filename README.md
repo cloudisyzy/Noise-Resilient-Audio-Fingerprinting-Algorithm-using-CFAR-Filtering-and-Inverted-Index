@@ -1,19 +1,20 @@
 # Noise-Resilient Audio Fingerprinting (CFAR + Inverted Index)
 
 This project implements an audio fingerprinting pipeline that is robust to noise, based on:
-- STFT-based anchor point selection with optional CFAR filtering
+- STFT-based anchor point selection with **Advanced CFAR filtering** (CA, OS, SO, TM)
 - Pairwise hashing within target zones
 - An inverted index for fast matching
 
-What's new (refactor)
-- New Python package `audiofp/` with clear modules:
-  - `audiofp/fingerprint.py`: fingerprint extraction (STFT, anchors, hashes)
-  - `audiofp/index.py`: inverted index build and matching (now using multiprocessing)
-- `utils.py` is removed. Its API is available via:
-  - `from audiofp import ...` (recommended), or
-  - `from main import ...` (main also re-exports the same API)
-- `main.ipynb` is converted to `main.py`, keeping all example usages.
-- Index building is multiprocessing by default (instead of multithreading). Pass `multiprocess=False` to disable.
+## What's new (refactor)
+- **Advanced CFAR Modes**:
+  - **CA (Cell Averaging)**: Standard mode, best for Gaussian white noise (AWGN).
+  - **OS (Ordered Statistic)**: Uses 75th percentile, robust to impulsive noise (Nature recordings).
+  - **SO (Smallest Of)**: Uses min(left_window, right_window), best for dense music (avoids masking weak signals near strong beats).
+  - **TM (Trimmed Mean)**: Removes top 20%/bottom 10% outliers, offering a robust middle-ground.
+- **Refactored Structure**:
+  - `audiofp/`: Core package (fingerprint, index).
+  - `main.py`: Unified entry point with easy Scenario/CFAR configuration.
+- **Multiprocessing**: Enabled by default for faster index building.
 
 ## Project structure
 
@@ -38,113 +39,66 @@ Python 3.9+ recommended.
 pip install numpy librosa matplotlib seaborn scikit-learn tqdm
 ```
 
-If you plan to open figures in headless environments, configure a non-interactive Matplotlib backend or save figures to disk.
-
 ## Quick start
 
-### Run examples from main.py
+### 1. Configure Experiment in `main.py`
 
-Uncomment desired calls at the bottom of `main.py` and run:
+Open `main.py` and edit the configuration block at the bottom:
+
+```python
+if __name__ == "__main__":
+    # ==========================================
+    #             EXPERIMENT CONFIG
+    # ==========================================
+    
+    # Select Scenario: "AWGN" or "NATURE"
+    SCENARIO = "NATURE" 
+
+    # Select CFAR Algorithm: "CA", "OS", "SO", "TM"
+    CFAR_MODE = "TM"  
+```
+
+### 2. Run the script
 
 ```
 python main.py
 ```
 
-Examples included:
-1. Build inverted index (default: multiprocessing)
-2. Save/Load inverted index (pickled dict)
-3. Query a single file against a folder (builds index if not provided)
-4. Match a query folder against a reference folder
-5. Timing demo
+It will automatically select the appropriate dataset paths (if configured) and run the matching experiment, printing the classification accuracy.
 
-### Use as a library (recommended)
+### 3. Use as a library (recommended)
 
 ```python
 from audiofp import MusicFingerprint, inverted_index_table, music_to_folder_matching
 
-# Build inverted index for a folder of reference tracks
-ii = inverted_index_table("Data/GTZAN/", multiprocess=True)
+# Build inverted index
+ii = inverted_index_table("Data/GTZAN/", multiprocess=True, CFAR_mode="CA")
 
-# Query a single file against the index (no re-build)
+# Query with specific CFAR mode
 best, counts, deltas = music_to_folder_matching(
-    music_path="Data/mir-2013-GeorgeDataset_snippet(10sec)_1062/",
-    music_name="blues.00005-snippet-10-20.wav",
-    folder_path="",             # not used when inverted_index is supplied
+    music_path="Data/query_snippet.wav",
+    music_name="query.wav",
+    folder_path="",
     inverted_index=ii,
-    CFAR_flag=True,
+    CFAR_mode="TM",  # Use Trimmed Mean for query
 )
 
 print("Best match:", best)
 ```
 
-### From main.py (compat import)
+## Background & Inspiration
 
-If you prefer the previous `utils`-style import, `main.py` re-exports the same names:
+This project originates from a **Master's course project in Music Informatics**. 
 
-```python
-from main import invertedIndexTable, MusicFingerPrint
+The core innovation stems from the author's background in **Radar Signal Processing**. In radar systems, detecting a target against a complex background (clutter) is a classic problem, often solved using **CFAR (Constant False Alarm Rate)** algorithms. These algorithms dynamically adjust the detection threshold based on local noise statistics to maintain a stable false alarm rate.
 
-ii = invertedIndexTable("Data/GTZAN/", multithread=True)  # deprecated alias, mapped to multiprocess=True
-```
+Inspired by this, this project treats:
+- **Audio Spectrogram Peaks** as "radar targets".
+- **Background Music/Noise** as "clutter".
 
-## API overview
-
-- Fingerprinting
-  - `MusicFingerprint(file_path, file_name, window_length_ms=100, hop_length_ms=20, zero_padding=4)`
-  - `get_hash(...) -> List[Tuple[t1, (f1, f2, dt)]]`
-  - Backward-compatible aliases: `MusicFingerPrint`, `getHash`, etc.
-
-- Inverted Index & Matching
-  - `inverted_index_table(folder_path, ..., multiprocess=True, num_workers=None)`
-    - Deprecated alias: `invertedIndexTable(..., multithread=...)`
-  - `music_to_folder_matching(music_path, music_name, folder_path, inverted_index=None, ...)`
-  - `folder_to_folder_matching(folder_path, query_folder_path, inverted_index=None, ...)`
-  - `query_from_table(query_music, inverted_index, ...)`
-
-All functions support `CFAR_flag=True/False` to enable/disable CFAR filtering during anchor selection.
-
-## Notes on multiprocessing
-
-- Windows/macOS (spawn): Make sure execution is protected by:
-
-```python
-if __name__ == "__main__":
-    # call functions that build the index here
-```
-
-- You can control workers with `num_workers` in `inverted_index_table`. By default it uses `os.cpu_count()`.
-
-## Parameters
-
-- `window_length_ms`, `hop_length_ms`:
-  - Default 100 ms window, 20 ms hop; `n_fft = window_length * zero_padding`.
-- `delta_T_ms`, `n_bands`:
-  - Time/frequency tiling for anchor block maxima (default 200 ms and 20 bands).
-- `target_zone_*`:
-  - Define time/frequency target zone around anchor1 for pairing and hashing.
-- `CFAR_flag`:
-  - When True, applies local CFAR thresholding to suppress false anchors.
-
-## Migration guide (from older code)
-
-- `utils.py` has been removed.
-  - Replace `from utils import ...` with `from audiofp import ...`.
-  - If you must, `from main import ...` also works (same names are re-exported).
-- `multithread` parameter is deprecated; use `multiprocess` instead. If provided, it is mapped for backward compatibility.
-
-## Saving/Loading the inverted index
-
-```python
-import pickle
-
-# Save
-with open("Inverted_Index/GTZAN_STFT_inverted_index_table.pkl", "wb") as f:
-    pickle.dump(ii, f)
-
-# Load
-with open("Inverted_Index/GTZAN_STFT_inverted_index_table.pkl", "rb") as f:
-    ii_loaded = pickle.load(f)
-```
+By cross-applying radar technology to audio information retrieval, we implement and evaluate multiple CFAR variants to robustly extract audio fingerprints under challenging conditions:
+- **CA-CFAR**: The classic baseline, effective for uniform noise.
+- **OS/SO/TM-CFAR**: Advanced variants designed to handle non-homogeneous acoustic environments, impulsive noise, and dense polyphonic textures.
 
 ## Authors
 
@@ -152,4 +106,4 @@ with open("Inverted_Index/GTZAN_STFT_inverted_index_table.pkl", "rb") as f:
 
 ## License
 
-MIT (update if your repository uses a different license).
+MIT
