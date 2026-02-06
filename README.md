@@ -22,21 +22,21 @@ Below are the experimental results comparing different CFAR algorithms across tw
 
 | Algorithm | Accuracy |
 | :--- | :--- |
-| **TM-CFAR** | **0.7904** |
-| SO-CFAR | 0.7620 |
-| OS-CFAR | 0.7583 |
-| CA-CFAR | 0.7205 |
+| **TM-CFAR** | **79.04%** |
+| SO-CFAR | 76.20% |
+| OS-CFAR | 75.83% |
+| CA-CFAR | 72.05% |
 
 ### 2. Scenario: [AWGN] Gaussian White Noise
 *Condition: **SNR = 0dB**, Duration = 5s (Extremely challenging)*
 
 | Algorithm | Accuracy |
 | :--- | :--- |
-| **TM-CFAR** | **0.5100** |
-| SO-CFAR | 0.4850 |
-| CA-CFAR | 0.4550 |
-| OS-CFAR | 0.4400 |
-| *OFF (No Filter)* | *0.1600* |
+| **TM-CFAR** | **51.00%** |
+| SO-CFAR | 48.50% |
+| CA-CFAR | 45.50% |
+| OS-CFAR | 44.00% |
+| *OFF (No Filter)* | *16.00%* |
 
 - **Refactored Structure**:
   - `audiofp/`: Core package (fingerprint, index).
